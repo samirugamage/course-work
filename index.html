@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Local Course Player</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    body {
+      display: flex;
+      background: #1b1b1b;
+      color: #eee;
+      overflow: hidden;
+    }
+    #content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: #000;
+    }
+    #titlebar {
+      background: #222;
+      padding: 0.6rem 1rem;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    video {
+      flex: 1;
+      background: #000;
+      width: 100%;
+      height: 100%;
+    }
+    #sidebar {
+      width: 320px;
+      background: #fff;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid #ddd;
+      overflow-y: auto;
+    }
+    #sidebar-header {
+      padding: 1rem;
+      border-bottom: 1px solid #ddd;
+      font-size: 0.95rem;
+      background: #fafafa;
+      color: #333;
+      line-height: 1.5;
+    }
+    #selectBtn {
+      margin: 0.8rem 1rem;
+      width: calc(100% - 2rem);
+      padding: 0.6rem;
+      background: #0d6efd;
+      border: none;
+      border-radius: 4px;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    #selectBtn:hover {
+      background: #0b5ed7;
+    }
+    nav {
+      flex: 1;
+      overflow-y: auto;
+    }
+    nav details {
+      border-bottom: 1px solid #eee;
+    }
+    nav summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      font-size: 0.95rem;
+      background: #fafafa;
+      color: #333;
+      list-style: none;
+    }
+    nav summary:hover {
+      background: #f0f0f0;
+    }
+    nav summary::before {
+      content: "▶";
+      margin-right: 0.5rem;
+      transform: rotate(90deg);
+      transition: transform 0.1s ease-in;
+      font-size: 0.8rem;
+      color: #666;
+    }
+    nav details[open] summary::before {
+      transform: rotate(270deg);
+    }
+    .section-stats {
+      font-size: 0.85rem;
+      color: #666;
+    }
+    nav ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    nav li {
+      padding: 0.5rem 1.5rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    nav li:hover {
+      background: #f5f5f5;
+    }
+    nav li.selected {
+      background: #e6e6e6;
+      color: #000;
+    }
+    nav li.completed {
+      opacity: 0.6;
+    }
+    .video-title {
+      display: flex;
+      align-items: center;
+    }
+    .video-title input[type="checkbox"] {
+      margin-right: 0.6rem;
+      accent-color: #0d6efd;
+      width: 1rem;
+      height: 1rem;
+      cursor: pointer;
+    }
+    .video-title span.title-text {
+      flex: 1;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .video-duration {
+      margin-left: 1.6rem;
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 0.2rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="content">
+    <div id="titlebar">Select a video from the sidebar</div>
+    <video id="player" controls></video>
+  </div>
+
+  <div id="sidebar">
+    <div id="sidebar-header" id="overallStats">
+      <div id="progressText">0% complete</div>
+      <div id="videoCountText">0 / 0 videos</div>
+      <div id="timeText">0m / 0m</div>
+    </div>
+    <button id="selectBtn">Choose Course Folder</button>
+    <nav id="nav"></nav>
+  </div>
+
+  <script>
+    const selectBtn = document.getElementById('selectBtn');
+    const nav = document.getElementById('nav');
+    const player = document.getElementById('player');
+    const titlebar = document.getElementById('titlebar');
+    const progressText = document.getElementById('progressText');
+    const videoCountText = document.getElementById('videoCountText');
+    const timeText = document.getElementById('timeText');
+
+    const STORAGE_KEY = 'courseProgress';
+    const clean = name => name.replace(/^[0-9]+\.[ _-]*/, '').replace(/\.(mp4|vtt|html)$/i, '').trim();
+    const fmtTime = s => {
+      const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+      return h ? (h + 'h ' + m + 'm') : (m + 'm');
+    };
+    const loadProgress = () => JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const saveProgress = p => localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
+    const progress = loadProgress();
+
+    let allVideos = [];
+
+    async function attachTrack(trackHandle) {
+      if (!trackHandle) return;
+      const file = await trackHandle.getFile();
+      const url = URL.createObjectURL(file);
+      const track = document.createElement('track');
+      track.kind = 'subtitles';
+      track.label = 'English';
+      track.srclang = 'en';
+      track.src = url;
+      track.default = true;
+      player.appendChild(track);
+    }
+
+    async function getDuration(fileHandle) {
+      const file = await fileHandle.getFile();
+      return new Promise(res => {
+        const url = URL.createObjectURL(file);
+        const v = document.createElement('video');
+        v.preload = 'metadata';
+        v.src = url;
+        v.onloadedmetadata = () => {
+          res(v.duration);
+          v.remove();
+          URL.revokeObjectURL(url);
+        };
+      });
+    }
+
+    async function playVideo(fileHandle, vttHandle, meta) {
+      player.querySelectorAll('track').forEach(t => t.remove());
+      const file = await fileHandle.getFile();
+      const url = URL.createObjectURL(file);
+      player.src = url;
+      titlebar.textContent = clean(file.name);
+      await attachTrack(vttHandle);
+      player.play();
+      function seenEnough() {
+        if (player.currentTime / player.duration >= 0.9 && !progress[meta.name]) {
+          markWatched(meta.name, true);
+        }
+      }
+      player.addEventListener('timeupdate', seenEnough, { once: true });
+    }
+
+    function openQuiz(fileHandle) {
+      fileHandle.getFile().then(f => {
+        const url = URL.createObjectURL(f);
+        window.open(url, '_blank');
+      });
+    }
+
+    async function analyseModule(dirHandle) {
+      const videos = [], quizzes = [];
+      for await (const [entryName, entryHandle] of dirHandle.entries()) {
+        if (entryHandle.kind === 'file') {
+          const lower = entryName.toLowerCase();
+          if (lower.endsWith('.mp4')) videos.push({ name: entryName, handle: entryHandle });
+          else if (lower.endsWith('.html')) quizzes.push({ name: entryName, handle: entryHandle });
+        }
+      }
+      const enriched = await Promise.all(videos.map(async v => {
+        const base = v.name.replace(/\.mp4$/i, '');
+        let vtt = null;
+        try { vtt = await dirHandle.getFileHandle(base + '.vtt'); } catch {}
+        const duration = await getDuration(v.handle);
+        return { ...v, vttHandle: vtt, duration };
+      }));
+      enriched.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      quizzes.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      return { videos: enriched, quizzes };
+    }
+
+    function updateOverallStats() {
+      const total = allVideos.length;
+      const watched = allVideos.filter(v => progress[v.name]).length;
+      const watchedSeconds = allVideos.filter(v => progress[v.name]).reduce((sum, v) => sum + v.duration, 0);
+      const totalSeconds = allVideos.reduce((sum, v) => sum + v.duration, 0);
+      const pct = total ? Math.round((watched / total) * 100) : 0;
+
+      progressText.textContent = `${pct}% complete`;
+      videoCountText.textContent = `${watched} / ${total} videos`;
+      timeText.textContent = `${fmtTime(watchedSeconds)} / ${fmtTime(totalSeconds)}`;
+    }
+
+    function markWatched(name, isWatched) {
+      progress[name] = isWatched ? 1 : 0;
+      saveProgress(progress);
+      document.querySelectorAll(`[data-name="${name}"]`).forEach(li => {
+        const checkbox = li.querySelector('input[type="checkbox"]');
+        if (isWatched) {
+          li.classList.add('completed');
+          checkbox.checked = true;
+        } else {
+          li.classList.remove('completed');
+          checkbox.checked = false;
+        }
+      });
+      updateOverallStats();
+    }
+
+    async function buildUI(rootHandle) {
+      nav.innerHTML = '';
+      allVideos = [];
+
+      for await (const [folderName, folderHandle] of rootHandle.entries()) {
+        if (folderHandle.kind !== 'directory') continue;
+
+        const section = document.createElement('details');
+        const summary = document.createElement('summary');
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = clean(folderName);
+        summary.appendChild(titleSpan);
+        section.appendChild(summary);
+
+        const list = document.createElement('ul');
+        section.appendChild(list);
+        nav.appendChild(section);
+
+        const { videos, quizzes } = await analyseModule(folderHandle);
+        allVideos.push(...videos);
+
+        videos.forEach(v => {
+          const li = document.createElement('li');
+          li.classList.add('video-item');
+          li.setAttribute('data-name', v.name);
+          li.setAttribute('data-duration', v.duration);
+          if (progress[v.name]) li.classList.add('completed');
+
+          const titleDiv = document.createElement('div');
+          titleDiv.className = 'video-title';
+
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = Boolean(progress[v.name]);
+          checkbox.addEventListener('click', e => {
+            e.stopPropagation();
+            markWatched(v.name, checkbox.checked);
+          });
+
+          const textSpan = document.createElement('span');
+          textSpan.className = 'title-text';
+          textSpan.textContent = clean(v.name);
+
+          titleDiv.appendChild(checkbox);
+          titleDiv.appendChild(textSpan);
+          li.appendChild(titleDiv);
+
+          const durDiv = document.createElement('div');
+          durDiv.className = 'video-duration';
+          durDiv.textContent = fmtTime(v.duration);
+          li.appendChild(durDiv);
+
+          li.addEventListener('click', () => playVideo(v.handle, v.vttHandle, v));
+          list.appendChild(li);
+        });
+
+        quizzes.forEach(q => {
+          const li = document.createElement('li');
+          li.className = 'quiz-item';
+          li.textContent = clean(q.name);
+          li.addEventListener('click', () => openQuiz(q.handle));
+          list.appendChild(li);
+        });
+      }
+      updateOverallStats();
+    }
+
+    selectBtn.addEventListener('click', async () => {
+      if (!window.showDirectoryPicker) {
+        alert('Your browser lacks the File System Access API.');
+        return;
+      }
+      const dirHandle = await window.showDirectoryPicker();
+      await buildUI(dirHandle);
+    });
+  </script>
+</body>
+</html>
