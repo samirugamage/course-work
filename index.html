@@ -167,6 +167,7 @@
       <div id="progressText">0% complete</div>
       <div id="videoCountText">0 / 0 videos</div>
       <div id="timeText">0m / 0m</div>
+      <div id="remainingTimeText">0m left</div>
     </div>
     <button id="selectBtn">Choose Course Folder</button>
     <nav id="nav"></nav>
@@ -180,6 +181,7 @@
     const progressText = document.getElementById('progressText');
     const videoCountText = document.getElementById('videoCountText');
     const timeText = document.getElementById('timeText');
+    const remainingTimeText = document.getElementById('remainingTimeText');
 
     const STORAGE_KEY = 'courseProgress';
     const clean = name => name.replace(/^[0-9]+\.[ _-]*/, '').replace(/\.(mp4|vtt|html)$/i, '').trim();
@@ -270,11 +272,13 @@
       const watched = allVideos.filter(v => progress[v.name]).length;
       const watchedSeconds = allVideos.filter(v => progress[v.name]).reduce((sum, v) => sum + v.duration, 0);
       const totalSeconds = allVideos.reduce((sum, v) => sum + v.duration, 0);
+      const remainingSeconds = totalSeconds - watchedSeconds;
       const pct = total ? Math.round((watched / total) * 100) : 0;
 
       progressText.textContent = `${pct}% complete`;
       videoCountText.textContent = `${watched} / ${total} videos`;
       timeText.textContent = `${fmtTime(watchedSeconds)} / ${fmtTime(totalSeconds)}`;
+      remainingTimeText.textContent = `${fmtTime(remainingSeconds)} left`;
     }
 
     function markWatched(name, isWatched) {
