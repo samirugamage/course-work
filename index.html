@@ -79,7 +79,7 @@
     }
     nav summary {
       display: flex;
-      justify-content: space-between;
+      justify-content: flex-start;
       align-items: center;
       padding: 0.75rem 1rem;
       cursor: pointer;
@@ -87,6 +87,7 @@
       background: #fafafa;
       color: #333;
       list-style: none;
+      gap: 0.75rem;
     }
     nav summary:hover {
       background: #f0f0f0;
@@ -154,6 +155,19 @@
       color: #666;
       margin-top: 0.2rem;
     }
+    .topic-checkbox {
+      margin-right: 0.5rem;
+      accent-color: #0d6efd;
+      width: 1.1rem;
+      height: 1.1rem;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .at-speed {
+      color: #007bff;
+      font-size: 0.92em;
+      margin-top: 2px;
+    }
   </style>
 </head>
 <body>
@@ -168,6 +182,7 @@
       <div id="videoCountText">0 / 0 videos</div>
       <div id="timeText">0m / 0m</div>
       <div id="remainingTimeText">0m left</div>
+      <div id="remainingTimeAtSpeedText" class="at-speed"></div>
     </div>
     <button id="selectBtn">Choose Course Folder</button>
     <nav id="nav"></nav>
@@ -182,6 +197,7 @@
     const videoCountText = document.getElementById('videoCountText');
     const timeText = document.getElementById('timeText');
     const remainingTimeText = document.getElementById('remainingTimeText');
+    const remainingTimeAtSpeedText = document.getElementById('remainingTimeAtSpeedText');
 
     const STORAGE_KEY = 'courseProgress';
     const clean = name => name.replace(/^[0-9]+\.[ _-]*/, '').replace(/\.(mp4|vtt|html)$/i, '').trim();
@@ -194,7 +210,9 @@
     const progress = loadProgress();
 
     let allVideos = [];
+    let topicVideoMap = new Map();
 
+    // Captions off by default
     async function attachTrack(trackHandle) {
       if (!trackHandle) return;
       const file = await trackHandle.getFile();
@@ -204,7 +222,7 @@
       track.label = 'English';
       track.srclang = 'en';
       track.src = url;
-      track.default = true;
+      // No track.default, captions OFF by default
       player.appendChild(track);
     }
 
@@ -279,9 +297,30 @@
       videoCountText.textContent = `${watched} / ${total} videos`;
       timeText.textContent = `${fmtTime(watchedSeconds)} / ${fmtTime(totalSeconds)}`;
       remainingTimeText.textContent = `${fmtTime(remainingSeconds)} left`;
+
+      updateRemainingTimeAtSpeed(remainingSeconds);
     }
 
-    function markWatched(name, isWatched) {
+    function updateRemainingTimeAtSpeed(remainingSeconds = undefined) {
+      // Get the actual remaining time in seconds if not passed
+      if (remainingSeconds === undefined) {
+        const watchedSeconds = allVideos.filter(v => progress[v.name]).reduce((sum, v) => sum + v.duration, 0);
+        const totalSeconds = allVideos.reduce((sum, v) => sum + v.duration, 0);
+        remainingSeconds = totalSeconds - watchedSeconds;
+      }
+      // Use current playbackRate (default to 1 if not loaded)
+      let rate = player.playbackRate || 1;
+      // Only show at-speed remaining if remaining > 0 and speed != 1
+      if (remainingSeconds > 0 && rate && rate !== 1) {
+        const atSpeedSec = remainingSeconds / rate;
+        remainingTimeAtSpeedText.textContent =
+          `at ${rate.toFixed(2).replace(/\.00$/, "")}x: ${fmtTime(atSpeedSec)} left`;
+      } else {
+        remainingTimeAtSpeedText.textContent = "";
+      }
+    }
+
+    function markWatched(name, isWatched, skipUpdateTopics = false) {
       progress[name] = isWatched ? 1 : 0;
       saveProgress(progress);
       document.querySelectorAll(`[data-name="${name}"]`).forEach(li => {
@@ -295,19 +334,58 @@
         }
       });
       updateOverallStats();
+      if (!skipUpdateTopics) updateAllTopicCheckboxes();
+    }
+
+    // Set all videos under topic to watched/unwatched
+    function setTopicVideosWatched(topicId, isWatched) {
+      const videoNames = topicVideoMap.get(topicId) || [];
+      videoNames.forEach(name => {
+        markWatched(name, isWatched, true);
+      });
+      updateAllTopicCheckboxes();
+    }
+
+    // After any video tick, update the topic checkbox
+    function updateAllTopicCheckboxes() {
+      for (const [topicId, videoNames] of topicVideoMap.entries()) {
+        const ch = document.getElementById(topicId);
+        if (!ch) continue;
+        const total = videoNames.length;
+        const done = videoNames.filter(n => progress[n]).length;
+        ch.checked = done === total && total > 0;
+        ch.indeterminate = done > 0 && done < total;
+      }
     }
 
     async function buildUI(rootHandle) {
       nav.innerHTML = '';
       allVideos = [];
+      topicVideoMap = new Map();
 
       for await (const [folderName, folderHandle] of rootHandle.entries()) {
         if (folderHandle.kind !== 'directory') continue;
 
+        // unique id for topic
+        const topicId = 'topic-' + Math.random().toString(36).substr(2, 9);
+
         const section = document.createElement('details');
         const summary = document.createElement('summary');
+
+        // Topic master checkbox
+        const topicCheckbox = document.createElement('input');
+        topicCheckbox.type = 'checkbox';
+        topicCheckbox.className = 'topic-checkbox';
+        topicCheckbox.id = topicId;
+        topicCheckbox.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setTopicVideosWatched(topicId, topicCheckbox.checked);
+        });
+
         const titleSpan = document.createElement('span');
         titleSpan.textContent = clean(folderName);
+
+        summary.appendChild(topicCheckbox);
         summary.appendChild(titleSpan);
         section.appendChild(summary);
 
@@ -317,6 +395,7 @@
 
         const { videos, quizzes } = await analyseModule(folderHandle);
         allVideos.push(...videos);
+        topicVideoMap.set(topicId, videos.map(v => v.name));
 
         videos.forEach(v => {
           const li = document.createElement('li');
@@ -362,6 +441,7 @@
         });
       }
       updateOverallStats();
+      updateAllTopicCheckboxes();
     }
 
     selectBtn.addEventListener('click', async () => {
@@ -371,6 +451,17 @@
       }
       const dirHandle = await window.showDirectoryPicker();
       await buildUI(dirHandle);
+    });
+
+    // Listen for playback rate changes and update remaining time at speed
+    player.addEventListener('ratechange', () => {
+      // recompute remaining time at new speed
+      updateOverallStats();
+    });
+
+    // Also update when loading for the first time (default speed may be changed programmatically)
+    player.addEventListener('loadedmetadata', () => {
+      updateOverallStats();
     });
   </script>
 </body>
